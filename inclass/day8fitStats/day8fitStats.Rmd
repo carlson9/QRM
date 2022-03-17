@@ -1,0 +1,91 @@
+---
+title: "Day 8 - Fit Statistics"
+author: "David Carlson"
+date: "March 21, 2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd('~/QRM/inclass/day8fitStats/')
+data = read.csv('../day6GLMs/data.csv')
+pop_logit = glm(intercon ~ country_pop + aggdifxx + gdppc + polity2, 
+                 data=data,
+                 family = binomial)
+```
+
+# Fit Statistics
+
+## Pearson statistic
+
+$$
+X^2 = \displaystyle\sum_{i=1}^n R^2_{Pearson} = \displaystyle\sum_{i=1}^n \left[\frac{Y-\mu}{\sqrt{Var[\mu]_i}}\right]^2
+$$
+
+Statistic is distributed $$\chi^2_{n-p}$$. Useful for large sample sizes, and testing nested models.
+
+```{r pearson}
+xsq = sum(residuals(pop_logit, type = "pearson")^2)
+pchisq(xsq, pop_logit$df.residual, lower.tail = F) #we are in the tails, but this is not really an appropriate test for binomial data
+```
+
+Compare nested models: Compare to the null.
+
+```{r pearsonNull}
+pop_logit_null = glm(intercon ~ aggdifxx + gdppc + polity2, 
+                 data=data,
+                 family = binomial)
+anova(pop_logit, pop_logit_null, test = 'Chisq')
+```
+
+## Akaike Information Criterion (AIC)
+
+Again, useful when $n>>p$. Also useful for comparing non-nested models.
+
+$$
+\text{AIC} = -2\ell(\hat{\theta} | y) + 2p
+$$
+
+```{r aic}
+pop_logit$aic
+pop_logit_null$aic #larger, therefore 'worse'
+```
+
+## Bayesian Information Criterion (BIC)
+
+AIC favors more explanatory variables and greater fit, BIC favors more parsimonious models. BIC is based on Bayesian principles, but is an approximation appropriate for frequentist methods.
+
+$$
+\text{BIC} = -2\ell(\hat{\theta}|y) + p\log(n)
+$$
+
+```{r bic}
+BIC(pop_logit)
+BIC(pop_logit_null)
+```
+
+# Bootstrapping
+
+We have not covered this yet. Even though it is not in the book or plan, it is an important concept to understand. Bootstrapping is a general approach to statistical inference based on building a sampling distribution for a statistic by resampling from the data at hand. Bootstrapping offers advantages:
+- The bootstrap is quite general, although there are some cases in which it fails.
+- Because it does not require distributional assumptions (such as normally distributed errors), the bootstrap can provide more accurate inferences when the data are not well behaved or when the sample size is small.
+- It is possible to apply the bootstrap to statistics with sampling distributions that are difficult to derive, even asymptotically.
+- It  is  relatively  simple  to  apply  the  bootstrap  to  complex  data-collection plans (such as stratified and clustered samples).
+
+```{r bootstrap}
+iters = 1000
+coefs = matrix(nrow = iters, ncol = 5)
+dataComplete = na.omit(data[, c('intercon', 'country_pop', 'aggdifxx', 'gdppc', 'polity2')])
+for(i in 1:iters){ #with such a simple model, a for loop is fine, but parallelize for more complex models
+  dataSub = dataComplete[sample(1:nrow(dataComplete), nrow(dataComplete), replace = T),]
+  tempMod = glm(intercon ~ country_pop + aggdifxx + gdppc + polity2, 
+                 data=dataSub,
+                 family = binomial)
+  coefs[i, ] = tempMod$coefficients
+}
+ests = apply(coefs, 2, mean)
+stdError = apply(coefs, 2, sd)
+summary(pop_logit)
+cbind(ests, stdError)
+cbind(ests, stdError, pop_logit$coefficients, summary(pop_logit)$coefficients[, 2])
+```
