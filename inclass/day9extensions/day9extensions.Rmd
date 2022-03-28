@@ -1,0 +1,151 @@
+---
+title: "Day 9 - Extensions"
+author: "David Carlson"
+date: "December 1, 2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd('~/QRM/inclass/day9extensions/')
+data = read.csv('../day6GLMs/data.csv')
+```
+
+# Quasi-Likelihood Estimation
+
+- There are cases when there is not enough information about the distribution of the data, or the parametric form of the likelihood is known to be misspecified
+- Precludes the standard maximum likelihood estimation of unknown parameters since we cannot specify a full likelihood equation or a score function
+- Quasi-likelihood only requires specification of the mean function of the data and a stipulated relationship between this mean function and the variance function
+- Quasi-score function: $q_i = \frac{y_i-\mu_i}{a(\psi)\tau^2}$
+- Contribution of $i$th point to log-likelihood function: $Q_i = \int_{y_i}^{\mu_i}\frac{y_i-\mu_i}{a(\psi)\tau^2}dt$
+- Components of $\mathbf{Y}$ are independent by assumption (we can violate this in later weeks), the log-quasi-likelihood for the complete data is the sum of the individual contributions: $Q(\theta, a(\psi)|y) = \displaystyle\sum_{i=1}^n Q_i$
+- MLE of $\hat{\theta}$: $\frac{\partial}{\partial\theta} Q(\theta, \psi | y) = -\displaystyle\sum_{i=1}^n y_i + n\theta \equiv 0$
+- Quasi-deviance function: $D(\theta, \psi | y) = -2a(\psi)^{-1}\displaystyle\sum_{i=1}^n Q_i = 2\int_{\mu_i}^{y_i}\frac{y_i^{-t}}{\tau^2}dt$
+- Table 7.1 has some common quasi-likelihoods
+- Quasi-likelihood estimator is often less efficient than MLE and can never be more efficient
+- Quasi-Poisson: When there is overdispersion, allows us to model the variance as a linear function of the mean in contrast to the underlying assumption of a Poisson model that $\mu = \tau^2$ (can account for outliers)
+
+```{r quasi}
+pop_logit = glm(intercon ~ country_pop + aggdifxx + gdppc + polity2, 
+                 data=data,
+                 family = binomial)
+summary(pop_logit) #notice (Dispersion parameter for binomial family taken to be 1)
+q_pop_logit = glm(intercon ~ country_pop + aggdifxx + gdppc + polity2, 
+                 data=data,
+                 family = quasibinomial)
+cbind(coef(pop_logit), coef(q_pop_logit)) #equivalent
+cbind(confint(pop_logit), confint(q_pop_logit)) #suggests there is no problem
+summary(q_pop_logit) #notice (Dispersion parameter for quasibinomial family taken to be 1.028087), so not really a problem here
+
+#let's pretend polity2 is a count, and use gdppc to model it using a Poisson
+pop_pois = glm(I(polity2 + 10) ~ gdppc, data = data,
+               family = poisson)
+summary(pop_pois) #(Dispersion parameter for poisson family taken to be 1)
+q_pop_pois = glm(I(polity2 + 10) ~ gdppc, data = data,
+               family = quasipoisson)
+summary(q_pop_pois) #(Dispersion parameter for quasipoisson family taken to be 4.470922) != 1
+cbind(confint(pop_pois), confint(q_pop_pois)) #larger CIs
+#?family
+
+#let's compare to negative binomial (for overdispersed counts)
+library(MASS)
+pop_nb = glm.nb(I(polity2 + 10) ~ gdppc, data = data)
+cbind(coef(q_pop_pois), coef(pop_nb))
+cbind(confint(q_pop_pois), confint(pop_nb))
+#Since the negative binomial distribution has one more parameter than the Poisson, the second parameter can be used to adjust the variance independently of the mean
+# In the case of modest overdispersion, this may produce substantially similar results to an overdispersed Poisson distribution
+```
+
+# Generalized Linear Mixed-Effects Model
+
+- We will deal with in more detail in the TSCS week and in Bayesian
+- Mixed-effects models consider the dependencies of the observations within clusters and allow us not only to reach unbiased estimates of the effect of covariates of interest and their respective standard errors but also to address questions related to the variation between and within groups: analyze the trajectories of groups/individuals through time, assess the differences between clusters, and others
+- This approach is useful for panel data where responses recorded through time are perfectly grouped by panelist
+- For GLMMs, we add random effects to the linear predictor and then express the expected value of the outcome conditional on those random effects
+    + Effect of being a unit of observation (if the random effect is at the unit-level)
+    + If the subjects in our sample have been chosen randomly with the goal of treating them as a representation of the population of interest, then their effects on the outcome are also going to be random and generalizable to that same population
+    + Random variable that not only will help to make inferences about the population but also allows us to assess the variation between individuals, predict outcomes for each of them, and incorporate the existent correlation between observations
+    + There is therefore a distributional assumption on random effects (as opposed to with fixed effects)
+    + Generally more power than fixed effects, but need to make the above assumptions, because with greater power generally comes larger false positive rates if the assumptions are not met
+    
+```{r glmms}
+library(lme4)
+#start with a random intercept for year
+hier_pop_logit = glmer(intercon ~ country_pop + 
+                        aggdifxx + gdppc + polity2 +
+                        (1|year), 
+                 data=data,
+                 family = binomial)
+summary(hier_pop_logit) #so here we see that it is (near) singular, meaning we don't want to include this random effect as the variance is near zero
+#perhaps the effect of country_pop varies by year
+hier_pop_logit2 = glmer(intercon ~ 
+                        aggdifxx + gdppc + polity2 +
+                        (country_pop - 1|year), 
+                 data=data,
+                 family = binomial)
+summary(hier_pop_logit2)
+ranef(hier_pop_logit2)
+plot(as.numeric(rownames(ranef(hier_pop_logit2)$year)), as.numeric(unlist(ranef(hier_pop_logit2)$year))) #effect is decreasing over time, with a spike after the Cold War, and one in 1979
+```
+
+# Fractional Regression
+
+- For proportions
+- We can use a quasibinomial, but there are some undesirable properties of the estimator (such as the fact that proportions rarely follow the specified distribution)
+
+```{r frac}
+library(frm)
+#let's convert polity2 to a proportion and model with gdppc
+data2 = na.omit(data[, c('polity2', 'gdppc')])
+pol2 = (data2$polity2+10)/20
+gdppc = as.matrix(data2$gdppc)
+colnames(gdppc) = 'gdppc'
+mod_frac = frm(pol2, gdppc, linkfrac = 'logit')
+```
+
+#The Tobit Model
+
+- When you have censoring in the outcome
+- Can be on either or both sides
+
+```{r tobit}
+#polity is actually censored (and discrete, but we'll ignore that)
+library(AER)
+tob_mod = tobit(polity2 ~ gdppc, left = -10,
+                right = 10, data = data)
+summary(tob_mod)
+#?tobit
+```
+
+# Zero-Inflated Models
+
+- We have already discussed the original zero-inflated logit, in which coefficient estimates (not including the intercept) will remain unchanged if you drop excess zeros
+- More recent developments involve two-stage (but simultaneously estimated) regression
+- Model the probability that the observation is an always zero vs. a potential non-zero
+- Then multiply the probability of a potential non-zero with the distribution of interest
+- Could be logit, Probit, Poisson, ZIMVOP, etc.
+- Hurdle models also allow for undercount of zeros
+- Again, we will cover in more detail in Bayesian weeks
+
+```{r zeroinf}
+#Zero inflated Poisson for your rebellion data
+library(pscl)
+#?zeroinfl
+pop_zinf = zeroinfl(rebellion ~ country_pop + aggdifxx + gdppc + polity2, 
+                 data=data)
+summary(pop_zinf)
+#Zero inflated logit for your intercon
+library(Zelig)
+pop_z = zelig(intercon ~ country_pop + 
+                aggdifxx + gdppc + polity2, 
+              model = 'logit',
+                 data=data)
+summary(pop_z) #this just drops zeros if needed, does not model two stages (need to move to writing your own Bayesian model)
+```
+
+
+
+
+
+
+
