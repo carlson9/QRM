@@ -1,0 +1,204 @@
+---
+title: "Day 10 - Temporal Models"
+author: "David Carlson"
+date: "April 4, 2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd('~/QRM/inclass/day10temporal/')
+library(readstata13)
+data = read.dta13('WCRWreplication.dta')
+```
+
+# Temporal data analysis
+
+- Repeated measurements over time (but either not TSCS, or no reason to theoretically account for heterogeneity)
+- The reading goes over standard temporal analyses, but what if there are not equally temporally spaced observations?
+- We will first analyze identity link, modeling the change in polity following a violent or non-violent protest / uprising
+- Let's start by looking at the data
+
+```{r violence}
+plot(data$politychanget1 ~ data$eyear, type = 'n')
+points(data$eyear[as.logical(data$viol)],
+       data$politychanget1[as.logical(data$viol)],
+       pch = 16, col = 'red', cex = .5)
+points(data$eyear[as.logical(data$nonviol)],
+       data$politychanget1[as.logical(data$nonviol)],
+       pch = 18, col = 'green', cex = .5)
+legend('topleft',
+       legend = c('Violent', 'Nonviolent'),
+       pch = c(16, 18),
+       col = c('red', 'green'),
+       bty = 'n',
+       cex = .5)
+```
+
+- Looking at the above plot, it seems that non-violent movements are more associated with increases in polity scores
+- But what issues may arise?
+
+```{r linearTemporal}
+simpleMod = lm(politychanget1 ~ nonviol, data = data)
+summary(simpleMod)
+acf(data$politychanget1[order(data$eyear)],
+    na.action = na.pass) #not really an issue, but assumes evenly spaced observations
+library(car)
+qqPlot(simpleMod) #discrete makes it off, but also fat tails
+#check for stationarity
+#Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test. Here we will test the null hypothesis of trend stationarity (a low p-value will indicate a signal that is not trend stationary, has a unit root) (can also use Augmented Dickey-Fuller Test from readings)
+library(tseries)
+kpss.test(data$politychanget1[order(data$eyear)],
+          null = 'Trend') #low enough to be concerning, and again assumes even spacing
+#we could first difference to alleviate the trend, but again, these are not evenly spaced, and the explanatory is binary
+#devtools::install_github("andreas50/uts", build_vignettes=TRUE)
+library(uts)
+# uts(data$politychanget1[order(data$eyear)],
+#     as.POSIXct(as.character(data$eyear[order(data$eyear)]),
+#                format = '%Y')) #fails, because multiple observations per year
+#let's hack it by making them a minute apart
+times = c()
+for(i in 1:length(unique(data$eyear))) times = c(times, 1:table(data$eyear)[i])
+tser = uts(data$politychanget1[order(data$eyear)], 
+    as.POSIXct(paste(as.character(data$eyear[order(data$eyear)]),
+                 1,
+                 times,
+                 sep = ':'),
+               format = '%Y:%H:%M'))
+#now linearly interpolate
+newX = sample_values(na.omit(tser),
+              as.POSIXct(paste(as.character(rep(min(data$eyear):max(data$eyear), each = max(table(data$eyear)))),
+                 1,
+                 1:max(table(data$eyear)),
+                 sep = ':'),
+               format = '%Y:%H:%M'), interpolation  = 'linear')
+plot(newX ~ rep(min(data$eyear):max(data$eyear),
+                each = max(table(data$eyear))),
+     pch = 18)
+kpss.test(na.omit(newX),
+          null = 'Trend') #now we see a problem
+#what about heteroskedasdicity?
+#let's do the same for violent or not
+tser = uts(data$nonviol[order(data$eyear)], 
+    as.POSIXct(paste(as.character(data$eyear[order(data$eyear)]),
+                 1,
+                 times,
+                 sep = ':'),
+               format = '%Y:%H:%M'))
+#now linearly interpolate
+newV = sample_values(na.omit(tser),
+              as.POSIXct(paste(as.character(rep(min(data$eyear):max(data$eyear), each = max(table(data$eyear)))),
+                 1,
+                 1:max(table(data$eyear)),
+                 sep = ':'),
+               format = '%Y:%H:%M'))
+interMod = lm(newX ~ newV)
+summary(simpleMod)
+summary(interMod) #coefficient does not change much (why?), but SEs decrease (why?)
+acf(newX, na.action = na.pass) #now we clearly see there is a problem
+#what do we do?
+#the explanatory is binary, so we cannot first difference or lag or anything typical
+#we can adjust the standard errors (Newey-West)
+library(sandwich)
+library(lmtest)
+coeftest(interMod,
+         vcov. = NeweyWest(interMod)) #we see an increase in the SE
+data2 = na.omit(data[, c('politychanget1',
+                         'viol',
+                         'eyear')])
+simpleMod2 = lm(politychanget1 ~ viol, data2)
+coeftest(simpleMod2,
+         vcov. = NeweyWest(simpleMod2,
+                           order.by = ~data2$eyear))
+#the above is improper, because again assumes evenly spaced observations
+#Newey-West also makes strong parametric assumptions
+#this is when we can turn to GPs (more details next week)
+library(kernlab)
+modGP = gausspr(politychanget1 ~ viol + eyear,
+        data = data2,
+        kernel = 'rbfdot',
+        type = 'regression',
+        variance.model = T) #we use dot product for the non-stationarity, but here we use sep exp
+#when we code our own model, we can specify different inputs to mean and kernel, and make inferences on correlations
+#for now we just plot to make inferences
+xtestViol = data.frame('viol' = 1,
+                       'eyear' = min(data2$eyear):max(data2$eyear))
+xtestNonViol = data.frame('viol' = 0,
+                          'eyear' = min(data2$eyear):max(data2$eyear))
+ysViol = predict(modGP, xtestViol)
+ysViolLower = ysViol - 1.96*predict(modGP,
+                                    xtestViol,
+                                    type = 'sdeviation')
+ysViolUpper = ysViol + 1.96*predict(modGP,
+                                    xtestViol,
+                                    type = 'sdeviation')
+ysNonViol = predict(modGP, xtestNonViol)
+ysNonViolLower = ysNonViol - 1.96*predict(modGP,
+                                    xtestNonViol,
+                                    type = 'sdeviation')
+ysNonViolUpper = ysNonViol + 1.96*predict(modGP,
+                                    xtestNonViol,
+                                    type = 'sdeviation')
+
+plot(data$politychanget1 ~ data$eyear, type = 'n')
+points(data$eyear[as.logical(data$viol)],
+       data$politychanget1[as.logical(data$viol)],
+       pch = 16, col = 'red', cex = .5)
+points(data$eyear[as.logical(data$nonviol)],
+       data$politychanget1[as.logical(data$nonviol)],
+       pch = 18, col = 'green', cex = .5)
+lines(min(data2$eyear):max(data2$eyear),
+      ysViol, col = 'red')
+lines(min(data2$eyear):max(data2$eyear),
+      ysViolUpper, col = 'red', lty = 2)
+lines(min(data2$eyear):max(data2$eyear),
+      ysViolLower, col = 'red', lty = 2)
+lines(min(data2$eyear):max(data2$eyear),
+      ysNonViol, col = 'green')
+lines(min(data2$eyear):max(data2$eyear),
+      ysNonViolUpper, col = 'green', lty = 2)
+lines(min(data2$eyear):max(data2$eyear),
+      ysNonViolLower, col = 'green', lty = 2)
+
+legend('topleft',
+       legend = c('Violent', 'Nonviolent'),
+       pch = c(16, 18),
+       col = c('red', 'green'),
+       bty = 'n',
+       cex = .5)
+#we see that once temporal trends are accounted for, we cannot reject the null (but of course we are not controlling for anything, so take it with a grain of salt)
+```
+
+# Estimation of Growth Rates
+
+- There are many types of growth models
+- They generally fall into two categories: Population dynamics in demography, and economic growth
+- We will model the growth rate of protest movements, violent and non-violent, over time, and compare the growth rates
+
+```{r growth}
+library(growthrates)
+dataViol = data[as.logical(data$viol), ]
+dataNonViol = data[!as.logical(data$viol), ]
+#linear growth model
+growthLinViol = fit_easylinear(as.numeric(names(table(dataViol$eyear))),
+                               as.numeric(table(dataViol$eyear)))
+growthLinNonViol = fit_easylinear(as.numeric(names(table(dataNonViol$eyear))),
+                               as.numeric(table(dataNonViol$eyear)))
+summary(growthLinViol)
+summary(growthLinNonViol) #growing much faster
+
+#Nonparametric smoothing splines
+#Smoothing splines are a quick method to estimate maximum growth. The method is called nonparametric, because the growth rate is directly estimated from the smoothed data without being restricted to a specific model formula
+growthNPViol = fit_spline(as.numeric(names(table(dataViol$eyear))),
+                               as.numeric(table(dataViol$eyear)))
+growthNPNonViol = fit_spline(as.numeric(names(table(dataNonViol$eyear))),
+                               as.numeric(table(dataNonViol$eyear)))
+par(mfrow = c(1, 2))
+plot(growthNPViol)
+plot(growthNPNonViol)
+#we see that non-violent growth is estimated to be consistent, while violent growth is estimated to be quite wavy
+```
+
+
+
+
