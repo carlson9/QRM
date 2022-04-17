@@ -1,7 +1,7 @@
 ---
 title: "Day 10 - Temporal Models"
 author: "David Carlson"
-date: "April 4, 2022"
+date: "April 18, 2022"
 output: pdf_document
 ---
 
