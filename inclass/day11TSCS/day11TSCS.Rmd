@@ -1,0 +1,184 @@
+---
+title: "Day 11 - TSCS"
+author: "David Carlson"
+date: "May 9, 2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd('~/QRM/inclass/day11TSCS/')
+library(readstata13)
+data = read.dta13('WCRWreplication.dta')
+```
+
+# TSCS and Panel Data Analyses
+
+- There are no agreed upon defining characteristics between TSCS and panel data, but for our purposes we will refer to large N, mostly balanced data as panel
+- It is very important to note which of the modeling strategies (most of them) assume balance; this is often overlooked
+- We will first deal with protest data, and the relationship between violent protest and polity change
+
+## One- and Two-Way Fixed Effects Models
+
+- A `fixed effect' is colloquially simply an indicator, a dummy variable - but really they are all effects that are not assumed randomly distributed
+- In panel data, we can include a `wave' (temporal) effect and/or a unit effect
+- Most common to use two-way (both temporal and unit) for panel data
+- For TSCS, two-way is also common, but the interpretability and framework are hurt by multiple observations for a unit-time
+- Fixed effects control for heterogeneity in the data
+- The inclusion of unit and time fixed effects accounts for both unit-specific (but time-invariant) and time-specific (but unit-invariant) unobserved confounders in a flexible manner
+- Additivity and separability of the two types of unobserved confounders
+- However, their statistical power can be very low with small N, because of the loss in degrees of freedom
+- Unlike random/mixed effects, they do not have distributional assumptions
+- These two points mean that there is no information `borrowed' from other unit-times, and the variation that would be explained by your independent variable is largely absorbed
+- These have great asymptotic properties, but a lot of research on the actual practice show they perform rather poorly, even when assumptions are met
+  + Linearity (although one could nonparametrically adjust for unit-specific (time-specific) unobserved confounders by matching a treated observation with control observations of the same unit (time period), no other observation shares the same unit and time indices. Thus, the 2FE estimator critically relies upon the linearity assumption for its simultaneous adjustment for the two types of unobserved confounders)
+  + Separability (precisely when their respective convex hulls are disjoint (colloquially, do not overlap); means that the marginal rate of substitution between any pair of primary inputs is independent of the amount of intermediate inputs used)
+  + Additivity (means that the effect of one independent variable(s) on the dependent variable does NOT depend on the value of another independent variable(s))
+  + Functional form assumption (are we modeling the DGP?)
+  + Adjustment for the two types of unobserved confounders cannot be done nonparametrically under the 2FE framework
+- Very simple to run; just a linear model with factors
+- Let us explore the models from last week, but take into account that this is actually (highly unbalanced) TSCS data
+
+```{r fe}
+simpleMod = lm(politychanget1 ~ nonviol, data = data)
+summary(simpleMod)
+#lets add a temporal effect - the beginning year seems most appropriate
+timeMod = lm(politychanget1 ~ nonviol + as.factor(byear), #notice the as.factor wrapper - always use this to be safe so it is not interpretted numerically
+             data = data)
+summary(timeMod) #holds up
+#we can make inferences about the fixed effects
+plot(coef(timeMod)[-c(1:2)] ~ as.numeric(substr(names(coef(timeMod)[-c(1:2)]),
+                                     start = 17, stop = 20)))
+#doesnt actually seem that there is much of a trend in the baseline aggregate outcome
+#now, lets add a location fixed effect
+twowayMod = lm(politychanget1 ~ nonviol + as.factor(byear) + as.factor(location), #notice the as.factor wrapper - always use this to be safe so it is not interpretted numerically
+             data = data)
+summary(twowayMod) #still holds up, but keep in mind the very strong assumptions, especially when the fixed effects within country are not allowed to vary over time
+#now lets look at a balanced example, which makes more intuitive and mathematical sense
+#Bosnian ethnic voting as a function of violence experienced during the war
+data2 = read.csv('bosnia.csv')
+Log_Casualty.Model <- lm(Ethnic_Vote_Share ~ Log_Casualty,
+                         data = data2)
+summary(Log_Casualty.Model) #notice the lack of reliable effects
+#lets add a province dummy
+Log_Casualty.Model2 <- lm(Ethnic_Vote_Share ~ Log_Casualty + as.factor(Municipality),
+                         data = data2)
+summary(Log_Casualty.Model2) #still nothing, but notice the NAs - why?
+#add temporal effects
+Log_Casualty.Model3 <- lm(Ethnic_Vote_Share ~ Log_Casualty + as.factor(Municipality) + as.factor(Year),
+                         data = data2)
+summary(Log_Casualty.Model3) #still nothing
+cbind(coef(Log_Casualty.Model)[2],
+      coef(Log_Casualty.Model2)[2],
+      coef(Log_Casualty.Model3)[2])
+#the coefficient gets larger, even though there are very few degrees of freedom - why?
+#we are no longer strictly controlling for heterogeneity, but exploring/exploiting province-year-level variation
+```
+
+## Difference-in-Difference Estimator
+
+- DiD estimators have traditionally been used to analyze the effect of a treatment at different times
+- There is absolutely no reason not to use them for continuous treatments though
+- Basically, we interact temporal fixed effects (but not the first, or baseline year) with the variable of interest (and include the constituent terms of time), and include unit fixed effects
+- This is an ideal model for the above Bosnian data
+- However, we need to assume parallel trends, i.e. the units (municipalities) have parallel trends in the outcome if it were not for treatment
+
+```{r did}
+dummy.matrix <- as.matrix(cbind(as.numeric(data2$Year == 2006), as.numeric(data2$Year==2010), as.numeric(data2$Year==2014)))
+Log_Casualty.Model.did <- lm(Ethnic_Vote_Share ~ Log_Casualty:dummy.matrix+dummy.matrix+
+                   Municipality-1, data2) #why is there a minus 1?
+summary(Log_Casualty.Model.did) #we see an effect, but decreasing in magnitude and reliability (keep this in mind)
+summary(Log_Casualty.Model.did)$r.squared # R-squared: 0.9905888
+#what's wrong with this R-squared?
+```
+
+## Lagged Dependent Variable (LDV) Models
+
+## Correcting Standard Errors
+
+- There are two main adjustments; robust clustered standard errors (RCSE) and panel corrected standard errors (PCSE)
+- The latter takes time into effect as a measure of distance, the former is agnostic about the effects but still corrects for each `cluster'
+- RCSE are extremely popular, and you will be asked for revisions that include them
+- Generally speaking, though, they suffer the same problems as robust standard errors
+- Furthermore, it is WIDELY assumed that they will increase SEs, but this is very often not true in practice
+- Let's look at the previous DiD model for RCSE, and the earlier model for PCSE (does not assume balance, but properties in unbalanced settings are questionable)
+
+```{r rcse}
+library(sandwich)
+library(multiwayvcov)
+library(lmtest)
+vcovCL1 <- cluster.vcov(Log_Casualty.Model.did, ~as.factor(data2$Municipality) + as.factor(data2$Year))
+coeftest(Log_Casualty.Model.did, vcovCL1) #notice the standard errors actually decreased
+#?cluster.vcov
+#now lets try pcse for the first set of models
+library(pcse)
+data.1 = na.omit(data[, c('politychanget1',
+                          'nonviol',
+                          'byear',
+                          'location')])
+twowayMod = lm(politychanget1 ~ nonviol + as.factor(byear) + as.factor(location),
+             data = data.1)
+# vcovPC1 = pcse(twowayMod,
+#      groupN = data.1$location,
+#      groupT = data.1$byear,
+#      pairwise = T) #takes some time
+# coeftest(twowayMod, vcovPC1) #does not work - any idea why? think about how the data is assumed related to other data points
+```
+
+## Mixed (Random and Fixed) Effects
+
+- We can use these in much the same way (and a lot more) as FEs
+- Random effects have a distributional assumption
+- This distribution buys us a lot of things
+  + We can borrow information from other units to find a generalized pattern across units
+  + The statistical power is much higher
+  + The power means we can get false positives, but generally only under mis-specification
+  + We can directly estimate the variation of the underlying distribution, meaning we can inspect which levels need variation accounted for
+  + We no longer make the assumption of separability, and estimate the covariation of the parameters
+- The distribution, in general, assumes that the population under study is representative of the group-of-interest, in that the effects are random realizations of the randomly distributed population (and temporal) heterogeneity (prevalancy kind of)
+- We will generally want to go Bayesian, for a number of reasons we will cover later, but basically it allows for much more control over the model and a much more flexible DGP
+- Random effects do not require balance
+- You can model units that only have one observation
+- You can model a small number of units
+- You can model a small number of observations
+- You can add predictors to the random effects for more precision (contextual effects)
+- You can also model any slope coefficient randomly, allowing it to vary at any desired level
+- Assumes that errors are uncorrelated with regressors
+- For now, let's look at the first models in an RE specification
+
+```{r re}
+library(lme4)
+REMod = lmer(politychanget1 ~ nonviol + (1|location),
+             data = data.1)
+summary(REMod) #if you look at the variation of random effects, location is not warranted
+#now let's check time
+REMod2 = lmer(politychanget1 ~ nonviol + (1|byear),
+             data = data.1)
+summary(REMod2) #no variation - no need for any heterogeneous exploration (though you might need to for reviewers, but you can argue these points preemptively or when you get reviews)
+```
+
+## Hausman Test
+
+- The null hypothesis is that the preferred model is random effects vs. the alternative the fixed effects
+- Tests whether the unique errors are correlated with the regressors, the null hypothesis is they are not
+
+```{r haus}
+#only works for uncoupled data, e.g.:
+library(plm)
+# phtest(politychanget1 ~ nonviol,
+#              data = data.1,
+#        model = c("within", "random"),
+#        index = c('byear', 'location'))
+REmod = plm(Ethnic_Vote_Share ~ Log_Casualty,
+                         data = data2,
+            index = 'Year',
+    model='random')
+FEmod = plm(Ethnic_Vote_Share ~ Log_Casualty,
+                         data = data2,
+    index='Year',
+    model='within')
+phtest(FEmod, REmod)
+#compare the models; why would we get this p-value?
+```
+
+

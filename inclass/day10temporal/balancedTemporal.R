@@ -169,7 +169,7 @@ tbls
 tbls[grep("Arrested",tbls,ignore.case = T)]
 df <- html_table(tbls[grep("Arrested",tbls,ignore.case = T)],fill = T)[[1]]
 arrestDate = df[, kept_columns]
-arrestDate = sub("\\[.*", "", arrestDate$`Date arrested`)
+arrestDate = sub("\\[.*", "", arrestDate)
 arrestDateHold = as.Date(arrestDate)
 arrestDateHold[is.na(arrestDateHold)] = c('2009-03-24', '', '', '', '', '', '2017-06-14', '2016-10-01', '', '2017-04-01', '2017-03-01', '')
 arrestDate = as.Date(arrestDateHold)
@@ -188,11 +188,11 @@ fit_segmented_list = lapply(1:5, function(bp) segmented(fit_lm, seg.Z = ~years, 
 
 lapply(fit_segmented_list, summary)
 lapply(fit_segmented_list, BIC)
-#1 cut-off seems appropriate (because the third could not estimate 3 cut-points)
-plot(fit_segmented_list[[1]])
+#2 cut-offs seems appropriate
+plot(fit_segmented_list[[2]])
 points(years, freqY)
-lines.segmented(fit_segmented_list[[1]])
-points.segmented(fit_segmented_list[[1]])
+lines.segmented(fit_segmented_list[[2]])
+points.segmented(fit_segmented_list[[2]])
 #so despite the previous peak, we still find relatively strong evidence while being agnostic that there was a change in 2016
 
 #what about a link function? we'll use Poisson
@@ -201,11 +201,11 @@ fit_segmented_list = lapply(1:5, function(bp) segmented(fit_p, seg.Z = ~years, n
 
 lapply(fit_segmented_list, summary)
 lapply(fit_segmented_list, BIC)
-#now 4 cut-offs seems appropriate (because the third could not estimate 3 cut-points)
-plot(fit_segmented_list[[4]])
+#now 2 cut-offs still seems appropriate (because the third could not estimate 3 cut-points)
+plot(fit_segmented_list[[2]])
 points(years, freqY)
-lines.segmented(fit_segmented_list[[4]])
-points.segmented(fit_segmented_list[[4]])
+lines.segmented(fit_segmented_list[[2]])
+points.segmented(fit_segmented_list[[2]])
 
 
 #same, but a slightly different library that optimizes fit stats for us
