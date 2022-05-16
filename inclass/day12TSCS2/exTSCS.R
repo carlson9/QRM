@@ -81,7 +81,7 @@ modFE2 = lm(congApp ~ econPer*party, toA)
 summary(modFE2) #repubs are most affected, dems are least, unsurprising
 
 #RE approach
-modRE2 = lmer(congApp ~ econPer + (econPer + 1 | party) - 1, toA)
+modRE2 = lmer(congApp ~ econPer + (econPer + 1 | party), toA)
 summary(modRE2)
 ranef(modRE2)
 
